@@ -1,0 +1,64 @@
+name: Sync GitHub Wiki to repo
+
+on:
+  gollum:            # fire whenever the wiki changes
+  workflow_dispatch: # allow manual run
+
+permissions:
+  contents: write         # needed to commit files
+  pull-requests: write    # needed to open/update PRs
+
+concurrency:
+  group: sync-wiki
+  cancel-in-progress: true   # always update one PR with the freshest wiki state
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Checkout wiki repo
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository }}.wiki
+          path: .wiki
+
+      - name: Sync files to ./docs
+        run: |
+          rm -rf docs
+          mkdir -p docs
+          rsync -av --delete --exclude '.git' .wiki/ docs/
+
+      - name: Build PR body
+        run: |
+          {
+            echo "Sync GitHub Wiki into \`./docs\`."
+            echo
+            echo "Event: ${{ github.event_name }}"
+            echo "Triggered by: ${{ github.triggering_actor }}"
+            if [ "${{ github.event_name }}" = "gollum" ]; then
+              echo
+              echo "Changed page (first): ${{ github.event.pages[0].title }} (${{ github.event.pages[0].action }})"
+              echo "${{ github.event.pages[0].html_url }}"
+            fi
+          } > PR_BODY.md
+
+      - name: Create or update PR
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/sync-wiki              # fixed branch so one PR stays fresh
+          delete-branch: true                  # auto-clean after merge on next run
+          base: main
+          add-paths: |
+            docs/**
+          commit-message: "chore(wiki): sync wiki → ./docs"
+          title: "chore(wiki): sync GitHub Wiki into ./docs"
+          body-path: PR_BODY.md
+          labels: |
+            docs
+            automated pr
